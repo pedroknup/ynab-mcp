@@ -1,0 +1,31 @@
+{
+  "name": "ynab-cli",
+  "version": "1.0.0",
+  "description": "A CLI for YNAB budget management",
+  "main": "dist/index.js",
+  "bin": {
+    "ynab": "./dist/index.js",
+    "ynab-mcp": "./dist/mcp-server.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "ts-node src/index.ts",
+    "start": "node dist/index.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "axios": "^1.7.9",
+    "chalk": "^4.1.2",
+    "commander": "^12.1.0",
+    "date-fns": "^3.6.0",
+    "dotenv": "^16.4.7",
+    "inquirer": "^8.2.6",
+    "table": "^6.8.2"
+  },
+  "devDependencies": {
+    "@types/inquirer": "^8.2.10",
+    "@types/node": "^22.10.1",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.7.2"
+  }
+}

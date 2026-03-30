@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "ynab": {
+      "command": "/Users/pedroknup/.nvm/versions/node/v18.20.8/bin/ynab-mcp",
+      "args": []
+    }
+  }
+}
