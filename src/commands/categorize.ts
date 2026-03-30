@@ -6,6 +6,7 @@ import chalk from 'chalk';
 
 interface CategorizeOptions {
   json?: boolean;
+  approve?: boolean;
 }
 
 /**
@@ -76,9 +77,10 @@ export async function categorizeCommand(
   }
 
   if (!opts.json) {
+    const action = opts.approve ? 'Categorizing and approving' : 'Assigning category';
     console.log(
       chalk.gray(
-        `Assigning category "${category.groupName} > ${category.name}" to transaction ${transactionId}...`
+        `${action} "${category.groupName} > ${category.name}" on transaction ${transactionId}...`
       )
     );
   }
@@ -87,6 +89,7 @@ export async function categorizeCommand(
   try {
     updated = await client.updateTransaction(config.budgetId, transactionId, {
       category_id: category.id,
+      ...(opts.approve ? { approved: true } : {}),
     });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -106,6 +109,7 @@ export async function categorizeCommand(
           payee_name: updated.payee_name,
           category_id: updated.category_id,
           category_name: updated.category_name,
+          approved: updated.approved,
         },
       })
     );
@@ -117,5 +121,6 @@ export async function categorizeCommand(
   console.log(`  Amount:   ${formatAmount(updated.amount)}`);
   console.log(`  Payee:    ${updated.payee_name ?? '—'}`);
   console.log(`  Category: ${chalk.cyan(updated.category_name ?? '—')}`);
+  console.log(`  Approved: ${updated.approved ? chalk.green('yes') : chalk.yellow('no')}`);
   console.log();
 }

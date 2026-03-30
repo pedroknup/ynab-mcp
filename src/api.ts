@@ -4,6 +4,8 @@ import type {
   CategoryGroup,
   Transaction,
   TransactionUpdate,
+  Account,
+  BudgetMonth,
 } from './types';
 
 const BASE_URL = 'https://api.ynab.com/v1';
@@ -56,6 +58,28 @@ export class YNABClient {
       data: { transactions: Transaction[] };
     }>(`/budgets/${budgetId}/transactions`, { params });
     return res.data.data.transactions;
+  }
+
+  // ── Accounts ─────────────────────────────────────────────────────────────
+
+  async getAccounts(budgetId: string): Promise<Account[]> {
+    const res = await this.http.get<{
+      data: { accounts: Account[] };
+    }>(`/budgets/${budgetId}/accounts`);
+    return res.data.data.accounts;
+  }
+
+  // ── Budget Months ─────────────────────────────────────────────────────────
+
+  /**
+   * Get a specific month's budget data (categories with budgeted/activity/balance).
+   * month format: YYYY-MM-01  or  'current'
+   */
+  async getBudgetMonth(budgetId: string, month: string): Promise<BudgetMonth> {
+    const res = await this.http.get<{
+      data: { month: BudgetMonth };
+    }>(`/budgets/${budgetId}/months/${month}`);
+    return res.data.data.month;
   }
 
   /**

@@ -6,6 +6,12 @@ import { summaryCommand } from './commands/summary';
 import { uncategorizedCommand } from './commands/uncategorized';
 import { categorizeCommand } from './commands/categorize';
 import { categoriesCommand } from './commands/categories';
+import { unapprovedCommand, approveCommand, approveAllCommand } from './commands/approve';
+import { budgetHealthCommand } from './commands/budget-health';
+import { monthlySummaryCommand } from './commands/monthly-summary';
+import { goalsCommand } from './commands/goals';
+import { accountsCommand } from './commands/accounts';
+import { trendsCommand } from './commands/trends';
 
 const program = new Command();
 
@@ -66,12 +72,13 @@ program
     'Assign a category to a transaction.\n' +
       '  <categoryIdOrName> can be a YNAB category UUID or a category name (uses fuzzy match).'
   )
+  .option('-a, --approve', 'also mark the transaction as approved')
   .option('--json', 'output as JSON')
   .action(
     async (
       transactionId: string,
       categoryIdOrName: string,
-      opts: { json?: boolean }
+      opts: { json?: boolean; approve?: boolean }
     ) => {
       await categorizeCommand(transactionId, categoryIdOrName, opts);
     }
@@ -91,6 +98,94 @@ program
       categoriesCommand(opts);
     }
   );
+
+// ── unapproved ────────────────────────────────────────────────────────────
+program
+  .command('unapproved')
+  .alias('unapp')
+  .description('List transactions that have not been approved yet')
+  .option('-n, --days <number>', 'look back N days (default: 30)', (v) => parseInt(v, 10))
+  .option('-d, --date <YYYY-MM-DD>', 'look back since this date (overrides --days)')
+  .option('--json', 'output as JSON')
+  .action(async (opts: { days?: number; date?: string; json?: boolean }) => {
+    await unapprovedCommand(opts);
+  });
+
+// ── approve ───────────────────────────────────────────────────────────────
+program
+  .command('approve <transactionId>')
+  .description('Approve a single transaction by ID')
+  .option('--json', 'output as JSON')
+  .action(async (transactionId: string, opts: { json?: boolean }) => {
+    await approveCommand(transactionId, opts);
+  });
+
+// ── approve-all ───────────────────────────────────────────────────────────
+program
+  .command('approve-all')
+  .description('Approve all unapproved transactions in a date range')
+  .option('-n, --days <number>', 'look back N days (default: 30)', (v) => parseInt(v, 10))
+  .option('-d, --date <YYYY-MM-DD>', 'look back since this date (overrides --days)')
+  .option('--dry-run', 'preview what would be approved without making changes')
+  .option('--json', 'output as JSON')
+  .action(async (opts: { days?: number; date?: string; dryRun?: boolean; json?: boolean }) => {
+    await approveAllCommand(opts);
+  });
+
+// ── budget-health ──────────────────────────────────────────────────────────
+program
+  .command('budget-health')
+  .alias('health')
+  .description('Show budget health for the current month — which categories are overspent, on track, or ahead')
+  .option('-m, --month <YYYY-MM-01>', 'month to check (default: current month)')
+  .option('-s, --status <status>', 'filter by status: overspent | warning | on_track | ahead')
+  .option('--json', 'output as JSON')
+  .action(async (opts: { month?: string; status?: string; json?: boolean }) => {
+    await budgetHealthCommand(opts);
+  });
+
+// ── monthly-summary ────────────────────────────────────────────────────────
+program
+  .command('monthly-summary')
+  .alias('month')
+  .description('Show income, spending, savings rate, and top groups for the month')
+  .option('-m, --month <YYYY-MM-01>', 'month to summarize (default: current month)')
+  .option('--json', 'output as JSON')
+  .action(async (opts: { month?: string; json?: boolean }) => {
+    await monthlySummaryCommand(opts);
+  });
+
+// ── goals ──────────────────────────────────────────────────────────────────
+program
+  .command('goals')
+  .description('Show savings goal progress')
+  .option('-m, --month <YYYY-MM-01>', 'month context (default: current month)')
+  .option('--json', 'output as JSON')
+  .action(async (opts: { month?: string; json?: boolean }) => {
+    await goalsCommand(opts);
+  });
+
+// ── accounts ───────────────────────────────────────────────────────────────
+program
+  .command('accounts')
+  .description('Show account balances and net worth')
+  .option('--on-budget', 'show only on-budget accounts')
+  .option('--json', 'output as JSON')
+  .action(async (opts: { onBudget?: boolean; json?: boolean }) => {
+    await accountsCommand(opts);
+  });
+
+// ── trends ─────────────────────────────────────────────────────────────────
+program
+  .command('trends')
+  .description('Analyse spending trends across the last N months — shows consistency, trajectory, and suggested budget adjustments')
+  .option('-m, --months <number>', 'number of past months to analyse (default: 3, max: 12)', (v) => parseInt(v, 10))
+  .option('-g, --group <name>', 'filter by category group name')
+  .option('-f, --flag-only', 'show only categories with actionable insights')
+  .option('--json', 'output as JSON')
+  .action(async (opts: { months?: number; group?: string; flagOnly?: boolean; json?: boolean }) => {
+    await trendsCommand(opts);
+  });
 
 program.parse(process.argv);
 

@@ -40,3 +40,24 @@ export function pad(str: string, width: number, align: 'left' | 'right' = 'left'
   if (align === 'right') return str.padStart(width);
   return str.padEnd(width);
 }
+
+/** Return the last N months as YYYY-MM-01 strings, most recent first. Does NOT include current month. */
+export function lastNMonths(n: number): string[] {
+  const months: string[] = [];
+  const d = new Date();
+  for (let i = 1; i <= n; i++) {
+    const year = d.getFullYear();
+    const month = d.getMonth() - i;
+    const date = new Date(year, month, 1);
+    months.push(
+      `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-01`
+    );
+  }
+  return months;
+}
+
+/** Return YYYY-MM-01 for the current month */
+export function currentMonthISO(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-01`;
+}

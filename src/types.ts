@@ -144,3 +144,62 @@ export interface AccountSpend {
   total: number;
   count: number;
 }
+
+// ── Account ───────────────────────────────────────────────────────────────────
+
+export interface Account {
+  id: string;
+  name: string;
+  type: string;
+  on_budget: boolean;
+  closed: boolean;
+  balance: number;        // milliunits
+  cleared_balance: number;
+  uncleared_balance: number;
+  deleted: boolean;
+}
+
+// ── Budget Month ──────────────────────────────────────────────────────────────
+
+export interface BudgetMonth {
+  month: string;          // YYYY-MM-01
+  note: string | null;
+  income: number;         // milliunits
+  budgeted: number;
+  activity: number;
+  to_be_budgeted: number;
+  age_of_money: number | null;
+  deleted: boolean;
+  categories: Category[];
+}
+
+// ── Budget Health ─────────────────────────────────────────────────────────────
+
+export type BudgetStatus = 'overspent' | 'warning' | 'on_track' | 'ahead' | 'unbudgeted';
+
+export interface CategoryHealth {
+  category_id: string;
+  category_name: string;
+  group_name: string;
+  budgeted: number;
+  activity: number;       // negative = spent
+  balance: number;
+  spend_rate: number;     // 0–1, how much of budget used
+  month_rate: number;     // 0–1, how far through the month
+  status: BudgetStatus;
+  over_by?: number;       // milliunits, only when overspent
+}
+
+// ── Goal Progress ─────────────────────────────────────────────────────────────
+
+export interface GoalProgress {
+  category_id: string;
+  category_name: string;
+  group_name: string;
+  goal_type: 'TB' | 'TBD' | 'MF' | 'NEED' | 'DEBT';
+  goal_target: number;
+  goal_percentage_complete: number;
+  goal_target_date: string | null;
+  balance: number;
+  on_track: boolean;
+}
