@@ -5,6 +5,7 @@ import type {
   CategoryGroup,
   Transaction,
   TransactionUpdate,
+  CreateTransactionParams,
   Account,
   BudgetMonth,
   ScheduledTransaction,
@@ -35,11 +36,19 @@ export class YNABClient {
 
   // ── Categories ───────────────────────────────────────────────────────────
 
-  async getCategories(budgetId: string): Promise<CategoryGroup[]> {
+  async getCategories(
+    budgetId: string,
+    lastKnowledge?: number
+  ): Promise<{ groups: CategoryGroup[]; serverKnowledge: number }> {
+    const params: Record<string, string> = {};
+    if (lastKnowledge !== undefined) params['last_knowledge_of_server'] = String(lastKnowledge);
     const res = await this.http.get<{
-      data: { category_groups: CategoryGroup[] };
-    }>(`/budgets/${budgetId}/categories`);
-    return res.data.data.category_groups;
+      data: { category_groups: CategoryGroup[]; server_knowledge: number };
+    }>(`/budgets/${budgetId}/categories`, { params });
+    return {
+      groups: res.data.data.category_groups,
+      serverKnowledge: res.data.data.server_knowledge,
+    };
   }
 
   // ── Transactions ─────────────────────────────────────────────────────────
@@ -168,6 +177,21 @@ export class YNABClient {
       `/budgets/${budgetId}/transactions/import`
     );
     return res.data.data.transaction_ids;
+  }
+
+  async createTransaction(budgetId: string, transaction: CreateTransactionParams): Promise<Transaction> {
+    const res = await this.http.post<{ data: { transaction: Transaction } }>(
+      `/budgets/${budgetId}/transactions`,
+      { transaction }
+    );
+    return res.data.data.transaction;
+  }
+
+  async deleteTransaction(budgetId: string, transactionId: string): Promise<Transaction> {
+    const res = await this.http.delete<{ data: { transaction: Transaction } }>(
+      `/budgets/${budgetId}/transactions/${transactionId}`
+    );
+    return res.data.data.transaction;
   }
 
   /**

@@ -109,9 +109,25 @@ export interface Config {
 // Local category cache stored in ~/.ynab-cli/categories-{budgetId}.json
 export interface CategoryCache {
   budgetId: string;
-  lastSynced: string; // ISO timestamp
+  lastSynced: string;       // ISO timestamp
+  serverKnowledge: number;  // YNAB delta-sync cursor — pass as last_knowledge_of_server on next sync
   groups: CategoryGroup[];
   flat: FlatCategory[];
+}
+
+// ── Create Transaction ────────────────────────────────────────────────────────
+
+export interface CreateTransactionParams {
+  account_id: string;
+  date: string;           // YYYY-MM-DD
+  amount: number;         // milliunits (negative = outflow)
+  payee_name?: string;
+  payee_id?: string;
+  category_id?: string;
+  memo?: string;
+  cleared?: ClearedStatus;
+  approved?: boolean;
+  flag_color?: FlagColor;
 }
 
 export interface FlatCategory {

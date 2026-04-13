@@ -72,7 +72,13 @@ async function getOrFetchCategories(client: YNABClient, budgetId: string): Promi
   const cached = loadCategoryCache(budgetId);
   if (cached) return cached;
 
-  const groups = await client.getCategories(budgetId);
+  const { groups, serverKnowledge } = await client.getCategories(budgetId);
+  const cache = buildCache(budgetId, groups, serverKnowledge);
+  saveCategoryCache(budgetId, cache);
+  return cache;
+}
+
+function buildCache(budgetId: string, groups: CategoryCache['groups'], serverKnowledge: number): CategoryCache {
   const flat = groups.flatMap((group) =>
     group.categories.map((cat) => ({
       id: cat.id,
@@ -83,9 +89,22 @@ async function getOrFetchCategories(client: YNABClient, budgetId: string): Promi
       deleted: cat.deleted,
     }))
   );
-  const cache: CategoryCache = { budgetId, lastSynced: new Date().toISOString(), groups, flat };
-  saveCategoryCache(budgetId, cache);
-  return cache;
+  return { budgetId, lastSynced: new Date().toISOString(), serverKnowledge, groups, flat };
+}
+
+function mergeGroups(existing: CategoryCache['groups'], delta: CategoryCache['groups']): CategoryCache['groups'] {
+  const groupMap = new Map(existing.map((g) => [g.id, { ...g, categories: [...g.categories] }]));
+  for (const dg of delta) {
+    const ex = groupMap.get(dg.id);
+    if (!ex) {
+      groupMap.set(dg.id, dg);
+    } else {
+      const catMap = new Map(ex.categories.map((c) => [c.id, c]));
+      for (const cat of dg.categories) catMap.set(cat.id, cat);
+      groupMap.set(dg.id, { ...ex, ...dg, categories: [...catMap.values()] });
+    }
+  }
+  return [...groupMap.values()];
 }
 
 // ── tool handlers ─────────────────────────────────────────────────────────────
@@ -858,6 +877,65 @@ async function handleRenamePayee(args: { payee_id: string; name: string }) {
   return { ok: true, payee: { id: updated.id, name: updated.name } };
 }
 
+async function handleCreateTransaction(args: {
+  account_id: string;
+  amount: number;
+  date?: string;
+  payee_name?: string;
+  category?: string;
+  memo?: string;
+  approved?: boolean;
+}) {
+  const { client, budgetId } = getClient();
+  let category_id: string | undefined;
+  if (args.category) {
+    const cache = await getOrFetchCategories(client, budgetId);
+    category_id = resolveCategory(args.category, cache.flat).id;
+  }
+
+  const created = await client.createTransaction(budgetId, {
+    account_id: args.account_id,
+    date: args.date ?? todayISO(),
+    amount: Math.round(args.amount * 1000),
+    payee_name: args.payee_name,
+    category_id,
+    memo: args.memo,
+    cleared: 'cleared',
+    approved: args.approved ?? false,
+  });
+
+  return {
+    ok: true,
+    transaction: {
+      id: created.id,
+      date: created.date,
+      amount: created.amount,
+      amount_formatted: formatAmount(created.amount),
+      payee_name: created.payee_name,
+      account_name: created.account_name,
+      category_name: created.category_name,
+      memo: created.memo,
+      approved: created.approved,
+    },
+  };
+}
+
+async function handleDeleteTransaction(args: { transaction_id: string }) {
+  const { client, budgetId } = getClient();
+  const deleted = await client.deleteTransaction(budgetId, args.transaction_id);
+  return {
+    ok: true,
+    transaction: {
+      id: deleted.id,
+      date: deleted.date,
+      amount: deleted.amount,
+      amount_formatted: formatAmount(deleted.amount),
+      payee_name: deleted.payee_name,
+      account_name: deleted.account_name,
+    },
+  };
+}
+
 async function handleImportTransactions() {
   const { client, budgetId } = getClient();
   const ids = await client.importTransactions(budgetId);
@@ -866,22 +944,26 @@ async function handleImportTransactions() {
 
 async function handleSyncCategories() {
   const { client, budgetId } = getClient();
-  const groups = await client.getCategories(budgetId);
+  const existing = loadCategoryCache(budgetId);
 
-  const flat = groups.flatMap((group) =>
-    group.categories.map((cat) => ({
-      id: cat.id,
-      name: cat.name,
-      groupName: group.name,
-      groupId: group.id,
-      hidden: cat.hidden,
-      deleted: cat.deleted,
-    }))
+  const { groups: deltaGroups, serverKnowledge } = await client.getCategories(
+    budgetId,
+    existing?.serverKnowledge
   );
 
-  const lastSynced = new Date().toISOString();
-  saveCategoryCache(budgetId, { budgetId, lastSynced, groups, flat });
-  return { ok: true, category_count: flat.length, group_count: groups.length, last_synced: lastSynced };
+  const groups = existing ? mergeGroups(existing.groups, deltaGroups) : deltaGroups;
+  const cache = buildCache(budgetId, groups, serverKnowledge);
+  saveCategoryCache(budgetId, cache);
+
+  const isDelta = existing !== null;
+  return {
+    ok: true,
+    sync_type: isDelta ? 'delta' : 'full',
+    changed_groups: deltaGroups.length,
+    category_count: cache.flat.filter((c) => !c.deleted).length,
+    group_count: groups.filter((g) => !g.deleted).length,
+    last_synced: cache.lastSynced,
+  };
 }
 
 // ── server setup ──────────────────────────────────────────────────────────────
@@ -1122,6 +1204,34 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
       description: 'Trigger an import of transactions from all linked bank accounts. Returns the number of new transactions imported. Use when the user asks to sync or refresh their bank transactions.',
       inputSchema: { type: 'object', properties: {} },
     },
+    {
+      name: 'ynab_create_transaction',
+      description: 'Manually log a transaction (e.g. a cash purchase or manual entry). Amount is in dollars — use negative for outflow (spending) and positive for inflow (income).',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          account_id:  { type: 'string', description: 'Account UUID to log the transaction in (use ynab_get_accounts to find IDs)' },
+          amount:      { type: 'number', description: 'Amount in dollars. Negative for outflow (e.g. -12.50), positive for inflow.' },
+          date:        { type: 'string', description: 'Date in YYYY-MM-DD format (default: today)' },
+          payee_name:  { type: 'string', description: 'Payee name (creates payee if it does not exist)' },
+          category:    { type: 'string', description: 'Category UUID or name (fuzzy matched)' },
+          memo:        { type: 'string', description: 'Optional memo / note' },
+          approved:    { type: 'boolean', description: 'Mark as approved immediately (default: false)' },
+        },
+        required: ['account_id', 'amount'],
+      },
+    },
+    {
+      name: 'ynab_delete_transaction',
+      description: 'Permanently delete a transaction by ID. Use with caution — this cannot be undone.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          transaction_id: { type: 'string', description: 'Transaction UUID to delete' },
+        },
+        required: ['transaction_id'],
+      },
+    },
   ],
 }));
 
@@ -1194,6 +1304,12 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         break;
       case 'ynab_import_transactions':
         result = await handleImportTransactions();
+        break;
+      case 'ynab_create_transaction':
+        result = await handleCreateTransaction(args as { account_id: string; amount: number; date?: string; payee_name?: string; category?: string; memo?: string; approved?: boolean });
+        break;
+      case 'ynab_delete_transaction':
+        result = await handleDeleteTransaction(args as { transaction_id: string });
         break;
       default:
         return { content: [{ type: 'text', text: `Unknown tool: ${name}` }], isError: true };
