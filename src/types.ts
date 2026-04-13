@@ -102,8 +102,9 @@ export interface Config {
   budgetName: string;
 }
 
-// Local category cache stored in ~/.ynab-cli/categories.json
+// Local category cache stored in ~/.ynab-cli/categories-{budgetId}.json
 export interface CategoryCache {
+  budgetId: string;
   lastSynced: string; // ISO timestamp
   groups: CategoryGroup[];
   flat: FlatCategory[];

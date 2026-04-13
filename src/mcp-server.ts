@@ -15,9 +15,9 @@ import {
 } from '@modelcontextprotocol/sdk/types.js';
 
 import { YNABClient } from './api';
-import { loadConfig, loadCategoryCache } from './config';
+import { loadConfig, loadCategoryCache, saveCategoryCache } from './config';
 import { formatAmount, daysAgoISO, todayISO, currentMonthISO, lastNMonths } from './format';
-import type { Transaction, FlatCategory, BudgetStatus } from './types';
+import type { Transaction, FlatCategory, BudgetStatus, CategoryCache } from './types';
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -61,6 +61,31 @@ function resolveCategory(input: string, flat: FlatCategory[]): FlatCategory {
   throw new Error(
     `No category found matching "${input}". Use ynab_list_categories to browse available categories.`
   );
+}
+
+/**
+ * Load the category cache for the given budget. If it doesn't exist, fetch
+ * from the YNAB API, persist it, and return it so callers never have to
+ * manually run ynab_sync_categories before categorizing.
+ */
+async function getOrFetchCategories(client: YNABClient, budgetId: string): Promise<CategoryCache> {
+  const cached = loadCategoryCache(budgetId);
+  if (cached) return cached;
+
+  const groups = await client.getCategories(budgetId);
+  const flat = groups.flatMap((group) =>
+    group.categories.map((cat) => ({
+      id: cat.id,
+      name: cat.name,
+      groupName: group.name,
+      groupId: group.id,
+      hidden: cat.hidden,
+      deleted: cat.deleted,
+    }))
+  );
+  const cache: CategoryCache = { budgetId, lastSynced: new Date().toISOString(), groups, flat };
+  saveCategoryCache(budgetId, cache);
+  return cache;
 }
 
 // ── tool handlers ─────────────────────────────────────────────────────────────
@@ -165,12 +190,7 @@ async function handleListUncategorized(args: { days?: number; since_date?: strin
 
 async function handleCategorize(args: { transaction_id: string; category: string }) {
   const { client, budgetId } = getClient();
-  const cache = loadCategoryCache();
-
-  if (!cache) {
-    throw new Error('No category cache. Run `ynab_sync_categories` first.');
-  }
-
+  const cache = await getOrFetchCategories(client, budgetId);
   const category = resolveCategory(args.category, cache.flat);
 
   const updated = await client.updateTransaction(budgetId, args.transaction_id, {
@@ -192,11 +212,9 @@ async function handleCategorize(args: { transaction_id: string; category: string
   };
 }
 
-function handleListCategories(args: { search?: string; group?: string; include_hidden?: boolean }) {
-  const cache = loadCategoryCache();
-  if (!cache) {
-    throw new Error('No category cache. Run `ynab_sync_categories` first.');
-  }
+async function handleListCategories(args: { search?: string; group?: string; include_hidden?: boolean }) {
+  const { client, budgetId } = getClient();
+  const cache = await getOrFetchCategories(client, budgetId);
 
   let results = cache.flat.filter((c) => !c.deleted);
   if (!args.include_hidden) results = results.filter((c) => !c.hidden);
@@ -246,7 +264,11 @@ async function handleBudgetHealth(args: { month?: string; status_filter?: string
   const month = args.month ?? currentMonthISO();
   const mRate = monthProgress();
 
-  const budgetMonth = await client.getBudgetMonth(budgetId, month);
+  const [budgetMonth, cache] = await Promise.all([
+    client.getBudgetMonth(budgetId, month),
+    getOrFetchCategories(client, budgetId),
+  ]);
+  const groupNameById = new Map(cache.flat.map((c) => [c.id, c.groupName]));
 
   const categories = [];
   for (const cat of budgetMonth.categories) {
@@ -263,7 +285,7 @@ async function handleBudgetHealth(args: { month?: string; status_filter?: string
     categories.push({
       category_id: cat.id,
       category_name: cat.name,
-      group_name: cat.category_group_name ?? '',
+      group_name: cat.category_group_name ?? groupNameById.get(cat.id) ?? '',
       budgeted: cat.budgeted,
       budgeted_formatted: formatAmount(cat.budgeted),
       activity: cat.activity,
@@ -300,13 +322,17 @@ async function handleBudgetHealth(args: { month?: string; status_filter?: string
 async function handleMonthlySummary(args: { month?: string }) {
   const { client, budgetId, budgetName } = getClient();
   const month = args.month ?? currentMonthISO();
-  const budgetMonth = await client.getBudgetMonth(budgetId, month);
+  const [budgetMonth, cache] = await Promise.all([
+    client.getBudgetMonth(budgetId, month),
+    getOrFetchCategories(client, budgetId),
+  ]);
   const mRate = monthProgress();
+  const groupNameById = new Map(cache.flat.map((c) => [c.id, c.groupName]));
 
   const groupMap = new Map<string, { activity: number; budgeted: number }>();
   for (const cat of budgetMonth.categories) {
     if (cat.deleted || cat.hidden) continue;
-    const g = cat.category_group_name ?? 'Other';
+    const g = cat.category_group_name ?? groupNameById.get(cat.id) ?? 'Other';
     const ex = groupMap.get(g);
     if (ex) { ex.activity += cat.activity; ex.budgeted += cat.budgeted; }
     else groupMap.set(g, { activity: cat.activity, budgeted: cat.budgeted });
@@ -350,7 +376,11 @@ async function handleMonthlySummary(args: { month?: string }) {
 async function handleGoalProgress(args: { month?: string }) {
   const { client, budgetId } = getClient();
   const month = args.month ?? currentMonthISO();
-  const budgetMonth = await client.getBudgetMonth(budgetId, month);
+  const [budgetMonth, cache] = await Promise.all([
+    client.getBudgetMonth(budgetId, month),
+    getOrFetchCategories(client, budgetId),
+  ]);
+  const groupNameById = new Map(cache.flat.map((c) => [c.id, c.groupName]));
 
   const goals = [];
   for (const cat of budgetMonth.categories) {
@@ -375,7 +405,7 @@ async function handleGoalProgress(args: { month?: string }) {
     goals.push({
       category_id: cat.id,
       category_name: cat.name,
-      group_name: cat.category_group_name ?? '',
+      group_name: cat.category_group_name ?? groupNameById.get(cat.id) ?? '',
       goal_type: cat.goal_type,
       goal_target: cat.goal_target,
       goal_target_formatted: cat.goal_target ? formatAmount(cat.goal_target) : null,
@@ -499,9 +529,7 @@ async function handleApproveAll(args: { days?: number; since_date?: string }) {
 
 async function handleCategorizAndApprove(args: { transaction_id: string; category: string }) {
   const { client, budgetId } = getClient();
-  const cache = loadCategoryCache();
-  if (!cache) throw new Error('No category cache. Run `ynab_sync_categories` first.');
-
+  const cache = await getOrFetchCategories(client, budgetId);
   const category = resolveCategory(args.category, cache.flat);
   const updated = await client.updateTransaction(budgetId, args.transaction_id, {
     category_id: category.id,
@@ -528,9 +556,11 @@ async function handleSpendingTrends(args: { months?: number; group?: string; fla
   const n = Math.min(args.months ?? 3, 12);
 
   const monthList = [currentMonthISO(), ...lastNMonths(n)];
-  const monthData = await Promise.all(
-    monthList.map((m) => client.getBudgetMonth(budgetId, m).catch(() => null))
-  );
+  const [monthData, cache] = await Promise.all([
+    Promise.all(monthList.map((m) => client.getBudgetMonth(budgetId, m).catch(() => null))),
+    getOrFetchCategories(client, budgetId),
+  ]);
+  const groupNameById = new Map(cache.flat.map((c) => [c.id, c.groupName]));
 
   const currentMonthBudget = monthData[0];
   const pastMonths = monthData.slice(1).filter(Boolean);
@@ -548,7 +578,7 @@ async function handleSpendingTrends(args: { months?: number; group?: string; fla
       if (existing) {
         existing.months.push({ month: m!.month, budgeted: cat.budgeted, activity: cat.activity });
       } else {
-        catMap.set(cat.id, { name: cat.name, groupName: cat.category_group_name ?? '', currentBudget: 0, months: [{ month: m!.month, budgeted: cat.budgeted, activity: cat.activity }] });
+        catMap.set(cat.id, { name: cat.name, groupName: cat.category_group_name ?? groupNameById.get(cat.id) ?? '', currentBudget: 0, months: [{ month: m!.month, budgeted: cat.budgeted, activity: cat.activity }] });
       }
     }
   }
@@ -687,7 +717,6 @@ async function handleListApproved(args: {
 
 async function handleSyncCategories() {
   const { client, budgetId } = getClient();
-  const { saveCategoryCache } = await import('./config');
   const groups = await client.getCategories(budgetId);
 
   const flat = groups.flatMap((group) =>
@@ -701,8 +730,9 @@ async function handleSyncCategories() {
     }))
   );
 
-  saveCategoryCache({ lastSynced: new Date().toISOString(), groups, flat });
-  return { ok: true, category_count: flat.length, group_count: groups.length, last_synced: new Date().toISOString() };
+  const lastSynced = new Date().toISOString();
+  saveCategoryCache(budgetId, { budgetId, lastSynced, groups, flat });
+  return { ok: true, category_count: flat.length, group_count: groups.length, last_synced: lastSynced };
 }
 
 // ── server setup ──────────────────────────────────────────────────────────────
@@ -913,7 +943,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         result = await handleCategorize(args as { transaction_id: string; category: string });
         break;
       case 'ynab_list_categories':
-        result = handleListCategories(args as { search?: string; group?: string; include_hidden?: boolean });
+        result = await handleListCategories(args as { search?: string; group?: string; include_hidden?: boolean });
         break;
       case 'ynab_sync_categories':
         result = await handleSyncCategories();
