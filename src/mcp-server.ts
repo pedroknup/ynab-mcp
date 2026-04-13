@@ -17,7 +17,7 @@ import {
 import { YNABClient } from './api';
 import { loadConfig, loadCategoryCache } from './config';
 import { formatAmount, daysAgoISO, todayISO, currentMonthISO, lastNMonths } from './format';
-import type { Transaction, FlatCategory } from './types';
+import type { Transaction, FlatCategory, BudgetStatus } from './types';
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -168,7 +168,7 @@ async function handleCategorize(args: { transaction_id: string; category: string
   const cache = loadCategoryCache();
 
   if (!cache) {
-    throw new Error('No category cache. Run `ynab sync` in the terminal first.');
+    throw new Error('No category cache. Run `ynab_sync_categories` first.');
   }
 
   const category = resolveCategory(args.category, cache.flat);
@@ -195,7 +195,7 @@ async function handleCategorize(args: { transaction_id: string; category: string
 function handleListCategories(args: { search?: string; group?: string; include_hidden?: boolean }) {
   const cache = loadCategoryCache();
   if (!cache) {
-    throw new Error('No category cache. Run `ynab sync` in the terminal first.');
+    throw new Error('No category cache. Run `ynab_sync_categories` first.');
   }
 
   let results = cache.flat.filter((c) => !c.deleted);
@@ -230,8 +230,6 @@ function monthProgress(): number {
   const now = new Date();
   return (now.getDate() - 1) / new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
 }
-
-type BudgetStatus = 'overspent' | 'warning' | 'on_track' | 'ahead' | 'unbudgeted';
 
 function computeStatus(budgeted: number, balance: number, spendRate: number, mRate: number): BudgetStatus {
   if (budgeted === 0) return 'unbudgeted';
@@ -502,24 +500,9 @@ async function handleApproveAll(args: { days?: number; since_date?: string }) {
 async function handleCategorizAndApprove(args: { transaction_id: string; category: string }) {
   const { client, budgetId } = getClient();
   const cache = loadCategoryCache();
-  if (!cache) throw new Error('No category cache. Run `ynab sync` in the terminal first.');
+  if (!cache) throw new Error('No category cache. Run `ynab_sync_categories` first.');
 
-  const { resolveCategory: resolve } = await import('./commands/categorize').then(() => ({
-    resolveCategory: (input: string) => {
-      const flat = cache.flat;
-      const byId = flat.find((c) => c.id === input && !c.deleted);
-      if (byId) return byId;
-      const byName = flat.filter((c) => !c.deleted && c.name.toLowerCase() === input.toLowerCase());
-      if (byName.length === 1) return byName[0];
-      if (byName.length > 1) throw new Error(`Multiple categories match "${input}". Use the category ID.`);
-      const fuzzy = flat.filter((c) => !c.deleted && c.name.toLowerCase().includes(input.toLowerCase()));
-      if (fuzzy.length === 1) return fuzzy[0];
-      if (fuzzy.length > 1) throw new Error(`Multiple categories partially match "${input}". Use the category ID.`);
-      throw new Error(`No category found matching "${input}".`);
-    },
-  }));
-
-  const category = resolve(args.category);
+  const category = resolveCategory(args.category, cache.flat);
   const updated = await client.updateTransaction(budgetId, args.transaction_id, {
     category_id: category.id,
     approved: true,
