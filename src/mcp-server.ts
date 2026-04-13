@@ -660,6 +660,48 @@ async function handleSpendingTrends(args: { months?: number; group?: string; fla
   };
 }
 
+async function handleListApproved(args: {
+  days?: number;
+  since_date?: string;
+  account_id?: string;
+  category_id?: string;
+}) {
+  const { client, budgetId } = getClient();
+  const sinceDate = args.since_date ?? daysAgoISO(args.days ?? 30);
+
+  // The YNAB API has no "approved" type filter — fetch all transactions and filter client-side.
+  const transactions = await client.getTransactions(budgetId, sinceDate);
+  let approved = transactions.filter((t) => !t.deleted && t.approved);
+
+  if (args.account_id) {
+    approved = approved.filter((t) => t.account_id === args.account_id);
+  }
+  if (args.category_id) {
+    approved = approved.filter((t) => t.category_id === args.category_id);
+  }
+
+  approved.sort((a, b) => b.date.localeCompare(a.date));
+
+  return {
+    since_date: sinceDate,
+    count: approved.length,
+    transactions: approved.map((t) => ({
+      id: t.id,
+      date: t.date,
+      amount: t.amount,
+      amount_formatted: formatAmount(t.amount),
+      payee_name: t.payee_name,
+      account_id: t.account_id,
+      account_name: t.account_name,
+      category_id: t.category_id,
+      category_name: t.category_name,
+      memo: t.memo,
+      cleared: t.cleared,
+      approved: t.approved,
+    })),
+  };
+}
+
 async function handleSyncCategories() {
   const { client, budgetId } = getClient();
   const { saveCategoryCache } = await import('./config');
@@ -747,6 +789,19 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         properties: {
           days: { type: 'number', description: 'Look back N days (default: 30)' },
           since_date: { type: 'string', description: 'Look back since YYYY-MM-DD (overrides days)' },
+        },
+      },
+    },
+    {
+      name: 'ynab_list_approved',
+      description: 'List approved transactions in a date range. Useful for reviewing what has already been confirmed, auditing spending history, or searching past activity. The YNAB API has no native "approved" filter — this fetches all transactions and filters client-side.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          days: { type: 'number', description: 'Look back N days (default: 30)' },
+          since_date: { type: 'string', description: 'Look back since YYYY-MM-DD (overrides days)' },
+          account_id: { type: 'string', description: 'Optional: filter by account UUID' },
+          category_id: { type: 'string', description: 'Optional: filter by category UUID' },
         },
       },
     },
@@ -852,6 +907,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     switch (name) {
       case 'ynab_list_unapproved':
         result = await handleListUnapproved(args as { days?: number; since_date?: string });
+        break;
+      case 'ynab_list_approved':
+        result = await handleListApproved(args as { days?: number; since_date?: string; account_id?: string; category_id?: string });
         break;
       case 'ynab_approve':
         result = await handleApprove(args as { transaction_id: string });
