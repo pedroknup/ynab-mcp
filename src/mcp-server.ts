@@ -17,7 +17,7 @@ import {
 import { YNABClient } from './api';
 import { loadConfig, loadCategoryCache, saveCategoryCache } from './config';
 import { formatAmount, daysAgoISO, todayISO, currentMonthISO, lastNMonths } from './format';
-import type { Transaction, FlatCategory, BudgetStatus, CategoryCache } from './types';
+import type { Transaction, FlatCategory, BudgetStatus, CategoryCache, ScheduledTransaction } from './types';
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -715,6 +715,155 @@ async function handleListApproved(args: {
   };
 }
 
+async function handleListScheduled(args: { days_ahead?: number; include_skipped?: boolean }) {
+  const { client, budgetId } = getClient();
+  const all = await client.getScheduledTransactions(budgetId);
+
+  const today = new Date();
+  const cutoff = new Date(today);
+  cutoff.setDate(today.getDate() + (args.days_ahead ?? 30));
+  const cutoffISO = cutoff.toISOString().split('T')[0];
+
+  let scheduled = all
+    .filter((t): t is ScheduledTransaction & { date_next: string } =>
+      !t.deleted && t.date_next <= cutoffISO
+    )
+    .sort((a, b) => a.date_next.localeCompare(b.date_next));
+
+  const totalOutflow = scheduled
+    .filter((t) => t.amount < 0 && !t.transfer_account_id)
+    .reduce((s, t) => s + t.amount, 0);
+
+  return {
+    count: scheduled.length,
+    total_outflow: totalOutflow,
+    total_outflow_formatted: formatAmount(totalOutflow),
+    scheduled: scheduled.map((t) => ({
+      id: t.id,
+      date_next: t.date_next,
+      frequency: t.frequency,
+      amount: t.amount,
+      amount_formatted: formatAmount(t.amount),
+      payee_name: t.payee_name,
+      account_name: t.account_name,
+      category_name: t.category_name,
+      memo: t.memo,
+      is_transfer: !!t.transfer_account_id,
+    })),
+  };
+}
+
+async function handleSetBudget(args: { category: string; amount: number; month?: string }) {
+  const { client, budgetId } = getClient();
+  const cache = await getOrFetchCategories(client, budgetId);
+  const cat = resolveCategory(args.category, cache.flat);
+  const month = args.month ?? currentMonthISO();
+  const budgeted = Math.round(args.amount * 1000);
+
+  const updated = await client.updateCategoryMonth(budgetId, month, cat.id, budgeted);
+
+  return {
+    ok: true,
+    month,
+    category_id: updated.id,
+    category_name: updated.name,
+    budgeted: updated.budgeted,
+    budgeted_formatted: formatAmount(updated.budgeted),
+    balance: updated.balance,
+    balance_formatted: formatAmount(updated.balance),
+  };
+}
+
+async function handleSearchTransactions(args: {
+  payee_name?: string;
+  payee_id?: string;
+  category_name?: string;
+  category_id?: string;
+  days?: number;
+  since_date?: string;
+}) {
+  const { client, budgetId } = getClient();
+  const sinceDate = args.since_date ?? daysAgoISO(args.days ?? 90);
+
+  let transactions: Transaction[];
+  let resolvedLabel: string;
+
+  if (args.payee_id || args.payee_name) {
+    let payeeId = args.payee_id;
+    if (!payeeId) {
+      const payees = await client.getPayees(budgetId);
+      const q = args.payee_name!.toLowerCase();
+      const matches = payees.filter((p) => !p.deleted && p.name.toLowerCase().includes(q));
+      if (matches.length === 0) throw new Error(`No payee found matching "${args.payee_name}".`);
+      if (matches.length > 1) throw new Error(`Multiple payees match "${args.payee_name}": ${matches.map((p) => `${p.name} (${p.id})`).join(', ')}. Use payee_id.`);
+      payeeId = matches[0].id;
+      resolvedLabel = matches[0].name;
+    } else {
+      resolvedLabel = payeeId;
+    }
+    transactions = await client.getTransactionsByPayee(budgetId, payeeId, sinceDate);
+  } else if (args.category_id || args.category_name) {
+    let categoryId = args.category_id;
+    if (!categoryId) {
+      const cache = await getOrFetchCategories(client, budgetId);
+      const cat = resolveCategory(args.category_name!, cache.flat);
+      categoryId = cat.id;
+      resolvedLabel = cat.name;
+    } else {
+      resolvedLabel = categoryId;
+    }
+    transactions = await client.getTransactionsByCategory(budgetId, categoryId, sinceDate);
+  } else {
+    throw new Error('Provide at least one of: payee_name, payee_id, category_name, category_id.');
+  }
+
+  const filtered = transactions.filter((t) => !t.deleted).sort((a, b) => b.date.localeCompare(a.date));
+  const total = filtered.reduce((s, t) => s + t.amount, 0);
+
+  return {
+    since_date: sinceDate,
+    resolved_as: resolvedLabel!,
+    count: filtered.length,
+    total: total,
+    total_formatted: formatAmount(total),
+    transactions: filtered.map((t) => ({
+      id: t.id,
+      date: t.date,
+      amount: t.amount,
+      amount_formatted: formatAmount(t.amount),
+      payee_name: t.payee_name,
+      account_name: t.account_name,
+      category_name: t.category_name,
+      memo: t.memo,
+      approved: t.approved,
+    })),
+  };
+}
+
+async function handleListPayees(args: { search?: string }) {
+  const { client, budgetId } = getClient();
+  const all = await client.getPayees(budgetId);
+  let payees = all.filter((p) => !p.deleted && !p.transfer_account_id);
+  if (args.search) {
+    const q = args.search.toLowerCase();
+    payees = payees.filter((p) => p.name.toLowerCase().includes(q));
+  }
+  payees.sort((a, b) => a.name.localeCompare(b.name));
+  return { count: payees.length, payees: payees.map((p) => ({ id: p.id, name: p.name })) };
+}
+
+async function handleRenamePayee(args: { payee_id: string; name: string }) {
+  const { client, budgetId } = getClient();
+  const updated = await client.updatePayee(budgetId, args.payee_id, args.name);
+  return { ok: true, payee: { id: updated.id, name: updated.name } };
+}
+
+async function handleImportTransactions() {
+  const { client, budgetId } = getClient();
+  const ids = await client.importTransactions(budgetId);
+  return { ok: true, imported_count: ids.length, transaction_ids: ids };
+}
+
 async function handleSyncCategories() {
   const { client, budgetId } = getClient();
   const groups = await client.getCategories(budgetId);
@@ -908,6 +1057,71 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         },
       },
     },
+    {
+      name: 'ynab_list_scheduled',
+      description: 'List upcoming scheduled and recurring transactions (bills, subscriptions, transfers). Useful for "what bills are due this month?" or "what recurring payments do I have coming up?"',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          days_ahead: { type: 'number', description: 'How many days ahead to look (default: 30)' },
+        },
+      },
+    },
+    {
+      name: 'ynab_set_budget',
+      description: 'Update the budgeted amount for a category in a given month. Use this to adjust budget targets mid-month or to set next month\'s budget based on spending trends.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          category:  { type: 'string', description: 'Category UUID or name (fuzzy matched)' },
+          amount:    { type: 'number', description: 'New budgeted amount in dollars (e.g. 150.00)' },
+          month:     { type: 'string', description: 'Month in YYYY-MM-01 format (default: current month)' },
+        },
+        required: ['category', 'amount'],
+      },
+    },
+    {
+      name: 'ynab_search_transactions',
+      description: 'Search transactions by payee or category. Useful for "show me all my Amazon purchases" or "what hit my Dining Out category last month?". Provide payee_name/payee_id OR category_name/category_id.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          payee_name:   { type: 'string', description: 'Payee name to search (partial match)' },
+          payee_id:     { type: 'string', description: 'Exact payee UUID' },
+          category_name: { type: 'string', description: 'Category name to search (fuzzy match)' },
+          category_id:  { type: 'string', description: 'Exact category UUID' },
+          days:         { type: 'number', description: 'Look back N days (default: 90)' },
+          since_date:   { type: 'string', description: 'Look back since YYYY-MM-DD (overrides days)' },
+        },
+      },
+    },
+    {
+      name: 'ynab_list_payees',
+      description: 'List all payees (merchants, people, places you pay). Useful for finding payee IDs for ynab_search_transactions or ynab_rename_payee.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          search: { type: 'string', description: 'Filter by name (partial match)' },
+        },
+      },
+    },
+    {
+      name: 'ynab_rename_payee',
+      description: 'Rename a payee. Useful for cleaning up imported payee names (e.g. "AMZN*1234XYZ" → "Amazon").',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          payee_id: { type: 'string', description: 'Payee UUID (use ynab_list_payees to find it)' },
+          name:     { type: 'string', description: 'New payee name' },
+        },
+        required: ['payee_id', 'name'],
+      },
+    },
+    {
+      name: 'ynab_import_transactions',
+      description: 'Trigger an import of transactions from all linked bank accounts. Returns the number of new transactions imported. Use when the user asks to sync or refresh their bank transactions.',
+      inputSchema: { type: 'object', properties: {} },
+    },
   ],
 }));
 
@@ -962,6 +1176,24 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         break;
       case 'ynab_spending_trends':
         result = await handleSpendingTrends(args as { months?: number; group?: string; flag_only?: boolean });
+        break;
+      case 'ynab_list_scheduled':
+        result = await handleListScheduled(args as { days_ahead?: number });
+        break;
+      case 'ynab_set_budget':
+        result = await handleSetBudget(args as { category: string; amount: number; month?: string });
+        break;
+      case 'ynab_search_transactions':
+        result = await handleSearchTransactions(args as { payee_name?: string; payee_id?: string; category_name?: string; category_id?: string; days?: number; since_date?: string });
+        break;
+      case 'ynab_list_payees':
+        result = await handleListPayees(args as { search?: string });
+        break;
+      case 'ynab_rename_payee':
+        result = await handleRenamePayee(args as { payee_id: string; name: string });
+        break;
+      case 'ynab_import_transactions':
+        result = await handleImportTransactions();
         break;
       default:
         return { content: [{ type: 'text', text: `Unknown tool: ${name}` }], isError: true };

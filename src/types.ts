@@ -44,6 +44,10 @@ export interface Category {
 
 export type ClearedStatus = 'cleared' | 'uncleared' | 'reconciled';
 export type FlagColor = 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | null;
+export type ScheduledTransactionFrequency =
+  | 'never' | 'daily' | 'weekly' | 'everyOtherWeek' | 'twiceAMonth'
+  | 'every4Weeks' | 'monthly' | 'everyOtherMonth' | 'every3Months'
+  | 'every4Months' | 'twiceAYear' | 'yearly' | 'everyOtherYear';
 
 export interface Subtransaction {
   id: string;
@@ -144,6 +148,35 @@ export interface AccountSpend {
   accountId: string;
   total: number;
   count: number;
+}
+
+// ── Scheduled Transaction ─────────────────────────────────────────────────────
+
+export interface ScheduledTransaction {
+  id: string;
+  date_first: string;                    // YYYY-MM-DD
+  date_next: string;                     // YYYY-MM-DD
+  frequency: ScheduledTransactionFrequency;
+  amount: number;                        // milliunits
+  memo: string | null;
+  flag_color: FlagColor;
+  account_id: string;
+  account_name: string;
+  payee_id: string | null;
+  payee_name: string | null;
+  category_id: string | null;
+  category_name: string | null;
+  transfer_account_id: string | null;
+  deleted: boolean;
+}
+
+// ── Payee ─────────────────────────────────────────────────────────────────────
+
+export interface Payee {
+  id: string;
+  name: string;
+  transfer_account_id: string | null;
+  deleted: boolean;
 }
 
 // ── Account ───────────────────────────────────────────────────────────────────

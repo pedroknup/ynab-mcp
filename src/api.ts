@@ -1,11 +1,14 @@
 import axios, { type AxiosInstance } from 'axios';
 import type {
   Budget,
+  Category,
   CategoryGroup,
   Transaction,
   TransactionUpdate,
   Account,
   BudgetMonth,
+  ScheduledTransaction,
+  Payee,
 } from './types';
 
 const BASE_URL = 'https://api.ynab.com/v1';
@@ -80,6 +83,91 @@ export class YNABClient {
       data: { month: BudgetMonth };
     }>(`/budgets/${budgetId}/months/${month}`);
     return res.data.data.month;
+  }
+
+  // ── Scheduled Transactions ────────────────────────────────────────────────
+
+  async getScheduledTransactions(budgetId: string): Promise<ScheduledTransaction[]> {
+    const res = await this.http.get<{
+      data: { scheduled_transactions: ScheduledTransaction[] };
+    }>(`/budgets/${budgetId}/scheduled_transactions`);
+    return res.data.data.scheduled_transactions;
+  }
+
+  // ── Payees ────────────────────────────────────────────────────────────────
+
+  async getPayees(budgetId: string): Promise<Payee[]> {
+    const res = await this.http.get<{ data: { payees: Payee[] } }>(
+      `/budgets/${budgetId}/payees`
+    );
+    return res.data.data.payees;
+  }
+
+  async updatePayee(budgetId: string, payeeId: string, name: string): Promise<Payee> {
+    const res = await this.http.patch<{ data: { payee: Payee } }>(
+      `/budgets/${budgetId}/payees/${payeeId}`,
+      { payee: { name } }
+    );
+    return res.data.data.payee;
+  }
+
+  // ── Transactions by filter ────────────────────────────────────────────────
+
+  async getTransactionsByPayee(
+    budgetId: string,
+    payeeId: string,
+    sinceDate?: string
+  ): Promise<Transaction[]> {
+    const params: Record<string, string> = {};
+    if (sinceDate) params['since_date'] = sinceDate;
+    const res = await this.http.get<{ data: { transactions: Transaction[] } }>(
+      `/budgets/${budgetId}/payees/${payeeId}/transactions`,
+      { params }
+    );
+    return res.data.data.transactions;
+  }
+
+  async getTransactionsByCategory(
+    budgetId: string,
+    categoryId: string,
+    sinceDate?: string
+  ): Promise<Transaction[]> {
+    const params: Record<string, string> = {};
+    if (sinceDate) params['since_date'] = sinceDate;
+    const res = await this.http.get<{ data: { transactions: Transaction[] } }>(
+      `/budgets/${budgetId}/categories/${categoryId}/transactions`,
+      { params }
+    );
+    return res.data.data.transactions;
+  }
+
+  // ── Budget month category ─────────────────────────────────────────────────
+
+  /**
+   * Update the budgeted amount for a category in a specific month.
+   * month format: YYYY-MM-01
+   * budgeted: milliunits
+   */
+  async updateCategoryMonth(
+    budgetId: string,
+    month: string,
+    categoryId: string,
+    budgeted: number
+  ): Promise<Category> {
+    const res = await this.http.patch<{ data: { category: Category } }>(
+      `/budgets/${budgetId}/months/${month}/categories/${categoryId}`,
+      { category: { budgeted } }
+    );
+    return res.data.data.category;
+  }
+
+  // ── Import ────────────────────────────────────────────────────────────────
+
+  async importTransactions(budgetId: string): Promise<string[]> {
+    const res = await this.http.post<{ data: { transaction_ids: string[] } }>(
+      `/budgets/${budgetId}/transactions/import`
+    );
+    return res.data.data.transaction_ids;
   }
 
   /**
