@@ -2,7 +2,14 @@
   "name": "ynab-mcp",
   "version": "1.0.0",
   "description": "MCP server for YNAB — lets Claude and other MCP clients manage your budget",
-  "keywords": ["ynab", "mcp", "model-context-protocol", "budget", "claude", "finance"],
+  "keywords": [
+    "ynab",
+    "mcp",
+    "model-context-protocol",
+    "budget",
+    "claude",
+    "finance"
+  ],
   "license": "MIT",
   "main": "dist/mcp-server.js",
   "bin": {
@@ -11,14 +18,19 @@
   "scripts": {
     "build": "tsc",
     "dev": "ts-node src/mcp-server.ts",
-    "start": "node dist/mcp-server.js"
+    "start": "node dist/mcp-server.js",
+    "test": "jest",
+    "test:watch": "jest --watch"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",
     "axios": "^1.7.9"
   },
   "devDependencies": {
+    "@types/jest": "^30.0.0",
     "@types/node": "^22.10.1",
+    "jest": "^30.3.0",
+    "ts-jest": "^29.4.9",
     "ts-node": "^10.9.2",
     "typescript": "^5.7.2"
   }
