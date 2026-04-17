@@ -17,6 +17,11 @@ import {
 import { YNABClient } from './api';
 import { loadConfig } from './config';
 import * as h from './handlers';
+import {
+  handleWatchBudget,
+  handleUnwatchBudget,
+  initializeWatchPoller,
+} from './watch-handlers';
 
 function getClient(): { client: YNABClient; budgetId: string; budgetName: string } {
   const config = loadConfig();
@@ -301,6 +306,38 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         required: ['transaction_id'],
       },
     },
+    {
+      name: 'watch_budget',
+      description: 'Register a webhook to receive push notifications when budget thresholds are crossed. Polls every 60s in the background and POSTs a JSON payload (type: "budget_update") to webhook_url when any specified threshold transitions from "not met" to "met". Returns a watch_id for later unwatch_budget calls.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          webhook_url: { type: 'string', description: 'HTTP(S) endpoint to receive POST notifications.' },
+          budget_id:   { type: 'string', description: 'Optional budget UUID. Defaults to the configured budget.' },
+          thresholds: {
+            type: 'object',
+            description: 'At least one threshold must be provided.',
+            properties: {
+              category_overspend_pct:  { type: 'number', description: 'Fire when any category is overspent by >= this percent of its budgeted amount (e.g. 20 = 20% over).' },
+              category_underspend_pct: { type: 'number', description: 'Fire when any category has >= this percent of its budgeted amount still available (e.g. 50 = half the budget unused).' },
+              total_available_below:   { type: 'number', description: 'Fire when total to-be-budgeted (in dollars) drops below this amount.' },
+            },
+          },
+        },
+        required: ['webhook_url', 'thresholds'],
+      },
+    },
+    {
+      name: 'unwatch_budget',
+      description: 'Remove a previously registered budget watch. The poller stops automatically once no watches remain.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          watch_id: { type: 'string', description: 'watch_id returned by watch_budget.' },
+        },
+        required: ['watch_id'],
+      },
+    },
   ],
 }));
 
@@ -336,6 +373,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       case 'ynab_import_transactions':    result = await h.handleImportTransactions(client, budgetId, budgetName, {} as Record<string, never>); break;
       case 'ynab_create_transaction':     result = await h.handleCreateTransaction(client, budgetId, budgetName, args as { account_id: string; amount: number; date?: string; payee_name?: string; category?: string; memo?: string; approved?: boolean }); break;
       case 'ynab_delete_transaction':     result = await h.handleDeleteTransaction(client, budgetId, budgetName, args as { transaction_id: string }); break;
+      case 'watch_budget':                result = handleWatchBudget(client, budgetId, budgetName, args as { webhook_url: string; budget_id?: string; thresholds: { category_overspend_pct?: number; category_underspend_pct?: number; total_available_below?: number } }); break;
+      case 'unwatch_budget':              result = handleUnwatchBudget(client, budgetId, budgetName, args as { watch_id: string }); break;
       default:
         return { content: [{ type: 'text', text: `Unknown tool: ${name}` }], isError: true };
     }
@@ -353,3 +392,10 @@ server.connect(transport).catch((err) => {
   process.stderr.write(`MCP server failed to start: ${err}\n`);
   process.exit(1);
 });
+
+// Resume any pre-existing budget watches from disk.
+try {
+  initializeWatchPoller();
+} catch (err) {
+  process.stderr.write(`[ynab-watch] failed to initialize watch poller: ${err}\n`);
+}
