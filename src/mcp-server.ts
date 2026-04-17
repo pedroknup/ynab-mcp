@@ -59,12 +59,13 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     },
     {
       name: 'ynab_categorize',
-      description: 'Assign a category to a transaction. Use ynab_list_categories to find category IDs or names.',
+      description: 'Assign a category to a transaction. Optionally set a memo/note at the same time. Use ynab_list_categories to find category IDs or names.',
       inputSchema: {
         type: 'object',
         properties: {
-          transaction_id: { type: 'string', description: 'Transaction ID from ynab_list_uncategorized' },
+          transaction_id: { type: 'string', description: 'Transaction ID' },
           category: { type: 'string', description: 'Category UUID or name (fuzzy matched). Use UUID to avoid ambiguity.' },
+          memo: { type: 'string', description: 'Optional memo/note to set on the transaction' },
         },
         required: ['transaction_id', 'category'],
       },
@@ -99,7 +100,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     },
     {
       name: 'ynab_list_approved',
-      description: 'List approved transactions in a date range. Useful for reviewing what has already been confirmed, auditing spending history, or searching past activity.',
+      description: 'List approved transactions in a date range. Use this to find, look up, or locate a specific transaction that has already been approved — e.g. to recategorize it, check an amount, or get its ID. Also useful for auditing spending history.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -134,14 +135,29 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     },
     {
       name: 'ynab_categorize_and_approve',
-      description: 'Categorize a transaction AND approve it in a single API call. The most efficient tool for the evening wrap-up — handles both steps at once.',
+      description: 'Categorize a transaction AND approve it in a single API call. Optionally set a memo/note at the same time. The most efficient tool for the evening wrap-up — handles both steps at once.',
       inputSchema: {
         type: 'object',
         properties: {
           transaction_id: { type: 'string', description: 'Transaction ID' },
           category: { type: 'string', description: 'Category UUID or name (fuzzy matched)' },
+          memo: { type: 'string', description: 'Optional memo/note to set on the transaction' },
         },
         required: ['transaction_id', 'category'],
+      },
+    },
+    {
+      name: 'ynab_update_transaction',
+      description: 'Update a transaction\'s memo, category, or approval status. Use this to add or change a memo/note on any transaction (approved or not), fix a category, or approve it. At least one of memo, category, or approved must be provided.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          transaction_id: { type: 'string', description: 'Transaction ID to update' },
+          memo: { type: 'string', description: 'New memo/note text. Pass an empty string to clear it.' },
+          category: { type: 'string', description: 'Category UUID or name (fuzzy matched) to reassign' },
+          approved: { type: 'boolean', description: 'Set to true to approve the transaction' },
+        },
+        required: ['transaction_id'],
       },
     },
     {
@@ -217,7 +233,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     },
     {
       name: 'ynab_search_transactions',
-      description: 'Search transactions by payee or category. Provide payee_name/payee_id OR category_name/category_id.',
+      description: 'Search all transactions (approved and unapproved) by payee name or category. Use this to find a specific transaction when you know who it was paid to or what category it is in. Returns transaction IDs needed for recategorizing or approving.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -302,8 +318,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       case 'ynab_list_approved':          result = await h.handleListApproved(client, budgetId, budgetName, args as { days?: number; since_date?: string; account_id?: string; category_id?: string }); break;
       case 'ynab_approve':                result = await h.handleApprove(client, budgetId, budgetName, args as { transaction_id: string }); break;
       case 'ynab_approve_all':            result = await h.handleApproveAll(client, budgetId, budgetName, args as { days?: number; since_date?: string }); break;
-      case 'ynab_categorize':             result = await h.handleCategorize(client, budgetId, budgetName, args as { transaction_id: string; category: string }); break;
-      case 'ynab_categorize_and_approve': result = await h.handleCategorizeAndApprove(client, budgetId, budgetName, args as { transaction_id: string; category: string }); break;
+      case 'ynab_categorize':             result = await h.handleCategorize(client, budgetId, budgetName, args as { transaction_id: string; category: string; memo?: string }); break;
+      case 'ynab_categorize_and_approve': result = await h.handleCategorizeAndApprove(client, budgetId, budgetName, args as { transaction_id: string; category: string; memo?: string }); break;
+      case 'ynab_update_transaction':     result = await h.handleUpdateTransaction(client, budgetId, budgetName, args as { transaction_id: string; memo?: string; category?: string; approved?: boolean }); break;
       case 'ynab_list_categories':        result = await h.handleListCategories(client, budgetId, budgetName, args as { search?: string; group?: string; include_hidden?: boolean }); break;
       case 'ynab_sync_categories':        result = await h.handleSyncCategories(client, budgetId, budgetName, {} as Record<string, never>); break;
       case 'ynab_budget_health':          result = await h.handleBudgetHealth(client, budgetId, budgetName, args as { month?: string; status_filter?: string }); break;

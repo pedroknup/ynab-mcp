@@ -266,11 +266,13 @@ export async function handleCategorize(
   client: YNABClient,
   budgetId: string,
   _budgetName: string,
-  args: { transaction_id: string; category: string }
+  args: { transaction_id: string; category: string; memo?: string }
 ) {
   const cache = await getOrFetchCategories(client, budgetId);
   const category = resolveCategory(args.category, cache.flat);
-  const updated = await client.updateTransaction(budgetId, args.transaction_id, { category_id: category.id });
+  const patch: { category_id: string; memo?: string } = { category_id: category.id };
+  if (args.memo !== undefined) patch.memo = args.memo;
+  const updated = await client.updateTransaction(budgetId, args.transaction_id, patch);
 
   return {
     ok: true,
@@ -279,6 +281,7 @@ export async function handleCategorize(
       amount_formatted: formatAmount(updated.amount),
       payee_name: updated.payee_name, category_id: updated.category_id,
       category_name: updated.category_name, account_name: updated.account_name,
+      memo: updated.memo,
     },
   };
 }
@@ -287,14 +290,16 @@ export async function handleCategorizeAndApprove(
   client: YNABClient,
   budgetId: string,
   _budgetName: string,
-  args: { transaction_id: string; category: string }
+  args: { transaction_id: string; category: string; memo?: string }
 ) {
   const cache = await getOrFetchCategories(client, budgetId);
   const category = resolveCategory(args.category, cache.flat);
-  const updated = await client.updateTransaction(budgetId, args.transaction_id, {
+  const patch: { category_id: string; approved: boolean; memo?: string } = {
     category_id: category.id,
     approved: true,
-  });
+  };
+  if (args.memo !== undefined) patch.memo = args.memo;
+  const updated = await client.updateTransaction(budgetId, args.transaction_id, patch);
 
   return {
     ok: true,
@@ -303,6 +308,35 @@ export async function handleCategorizeAndApprove(
       amount_formatted: formatAmount(updated.amount),
       payee_name: updated.payee_name, category_id: updated.category_id,
       category_name: updated.category_name, approved: updated.approved,
+      memo: updated.memo,
+    },
+  };
+}
+
+export async function handleUpdateTransaction(
+  client: YNABClient,
+  budgetId: string,
+  _budgetName: string,
+  args: { transaction_id: string; memo?: string; category?: string; approved?: boolean }
+) {
+  const patch: { memo?: string; category_id?: string; approved?: boolean } = {};
+  if (args.memo !== undefined) patch.memo = args.memo;
+  if (args.approved !== undefined) patch.approved = args.approved;
+  if (args.category) {
+    const cache = await getOrFetchCategories(client, budgetId);
+    const category = resolveCategory(args.category, cache.flat);
+    patch.category_id = category.id;
+  }
+  const updated = await client.updateTransaction(budgetId, args.transaction_id, patch);
+
+  return {
+    ok: true,
+    transaction: {
+      id: updated.id, date: updated.date, amount: updated.amount,
+      amount_formatted: formatAmount(updated.amount),
+      payee_name: updated.payee_name, category_id: updated.category_id,
+      category_name: updated.category_name, account_name: updated.account_name,
+      memo: updated.memo, approved: updated.approved,
     },
   };
 }
