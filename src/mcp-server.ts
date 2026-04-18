@@ -338,6 +338,23 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         required: ['watch_id'],
       },
     },
+    {
+      name: 'ynab_balance_history',
+      description: 'Get the daily running balance history for a specific account (or the main account by default). Returns a time series suitable for charting, plus the 30-day delta. Defaults to the last 12 months.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          account_id:   { type: 'string', description: 'Account UUID. Defaults to highest-balance on-budget account.' },
+          account_name: { type: 'string', description: 'Account name (partial match). Alternative to account_id.' },
+          since_date:   { type: 'string', description: 'Start date in YYYY-MM-DD format (default: 1 year ago).' },
+        },
+      },
+    },
+    {
+      name: 'ynab_age_of_money',
+      description: 'Get the current Age of Money metric (in days) from YNAB, along with income, spending, and to-be-budgeted for the current month.',
+      inputSchema: { type: 'object', properties: {} },
+    },
   ],
 }));
 
@@ -375,6 +392,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       case 'ynab_delete_transaction':     result = await h.handleDeleteTransaction(client, budgetId, budgetName, args as { transaction_id: string }); break;
       case 'watch_budget':                result = handleWatchBudget(client, budgetId, budgetName, args as { webhook_url: string; budget_id?: string; thresholds: { category_overspend_pct?: number; category_underspend_pct?: number; total_available_below?: number } }); break;
       case 'unwatch_budget':              result = handleUnwatchBudget(client, budgetId, budgetName, args as { watch_id: string }); break;
+      case 'ynab_balance_history':        result = await h.handleBalanceHistory(client, budgetId, budgetName, args as { account_id?: string; since_date?: string; account_name?: string }); break;
+      case 'ynab_age_of_money':           result = await h.handleAgeOfMoney(client, budgetId, budgetName, {} as Record<string, never>); break;
       default:
         return { content: [{ type: 'text', text: `Unknown tool: ${name}` }], isError: true };
     }

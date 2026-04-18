@@ -81,6 +81,23 @@ export class YNABClient {
     return res.data.data.accounts;
   }
 
+  /**
+   * Get transactions for a specific account, optionally since a given date.
+   * sinceDate format: YYYY-MM-DD
+   */
+  async getTransactionsByAccount(
+    budgetId: string,
+    accountId: string,
+    sinceDate?: string
+  ): Promise<Transaction[]> {
+    const params: Record<string, string> = {};
+    if (sinceDate) params['since_date'] = sinceDate;
+    const res = await this.http.get<{
+      data: { transactions: Transaction[] };
+    }>(`/budgets/${budgetId}/accounts/${accountId}/transactions`, { params });
+    return res.data.data.transactions;
+  }
+
   // ── Budget Months ─────────────────────────────────────────────────────────
 
   /**

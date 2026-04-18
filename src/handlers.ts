@@ -728,6 +728,11 @@ export async function handleSetBudget(
 
 // ── accounts ──────────────────────────────────────────────────────────────────
 
+const LIABILITY_TYPES = new Set([
+  'creditCard', 'lineOfCredit', 'mortgage', 'autoLoan', 'studentLoan',
+  'personalLoan', 'medicalDebt', 'otherDebt', 'otherLiability',
+]);
+
 export async function handleGetAccounts(
   client: YNABClient,
   budgetId: string,
@@ -737,9 +742,7 @@ export async function handleGetAccounts(
   const all = await client.getAccounts(budgetId);
   const accounts = all.filter((a) => !a.deleted && !a.closed);
 
-  const isLiability = (type: string) =>
-    ['creditCard', 'lineOfCredit', 'mortgage', 'autoLoan', 'studentLoan',
-     'personalLoan', 'medicalDebt', 'otherDebt', 'otherLiability'].includes(type);
+  const isLiability = (type: string) => LIABILITY_TYPES.has(type);
 
   const totalAssets      = accounts.filter((a) => !isLiability(a.type)).reduce((s, a) => s + a.balance, 0);
   const totalLiabilities = accounts.filter((a) =>  isLiability(a.type)).reduce((s, a) => s + a.balance, 0);
@@ -757,6 +760,119 @@ export async function handleGetAccounts(
       cleared_balance: a.cleared_balance, uncleared_balance: a.uncleared_balance,
       is_liability: isLiability(a.type),
     })),
+  };
+}
+
+// ── balance history ───────────────────────────────────────────────────────────
+
+export async function handleBalanceHistory(
+  client: YNABClient,
+  budgetId: string,
+  _budgetName: string,
+  args: { account_id?: string; since_date?: string; account_name?: string }
+) {
+  const all = await client.getAccounts(budgetId);
+  const accounts = all.filter((a) => !a.deleted && !a.closed);
+
+  let mainAccount: typeof accounts[0] | undefined;
+  if (args.account_id) {
+    mainAccount = accounts.find((a) => a.id === args.account_id);
+    if (!mainAccount) throw new Error(`Account ${args.account_id} not found.`);
+  } else if (args.account_name) {
+    mainAccount = accounts.find((a) => a.name.toLowerCase().includes(args.account_name!.toLowerCase()));
+    if (!mainAccount) throw new Error(`No account matching "${args.account_name}".`);
+  } else {
+    // Default: highest-balance on-budget non-liability account
+    mainAccount = accounts
+      .filter((a) => a.on_budget && !LIABILITY_TYPES.has(a.type))
+      .sort((a, b) => b.balance - a.balance)[0];
+    if (!mainAccount) throw new Error('No suitable main account found.');
+  }
+
+  const sinceDate = args.since_date ?? (() => {
+    const d = new Date();
+    d.setFullYear(d.getFullYear() - 1);
+    return d.toISOString().slice(0, 10);
+  })();
+
+  const transactions = await client.getTransactionsByAccount(budgetId, mainAccount.id, sinceDate);
+  const active = transactions.filter((t) => !t.deleted).sort((a, b) => a.date.localeCompare(b.date));
+
+  // Walk backwards from today's cleared balance to reconstruct historical series
+  const currentBalanceMilliunits = mainAccount.cleared_balance;
+
+  // Build daily deltas
+  const dailyDeltas = new Map<string, number>();
+  for (const t of active) {
+    dailyDeltas.set(t.date, (dailyDeltas.get(t.date) ?? 0) + t.amount);
+  }
+
+  // Walk backwards through dates to find balance at each date
+  const allDates = [...new Set(active.map((t) => t.date))].sort((a, b) => b.localeCompare(a));
+  const balanceByDate = new Map<string, number>();
+  let runningBalance = currentBalanceMilliunits;
+  for (const date of allDates) {
+    balanceByDate.set(date, runningBalance);
+    const delta = dailyDeltas.get(date) ?? 0;
+    runningBalance -= delta;
+  }
+  const today = new Date().toISOString().slice(0, 10);
+  if (!balanceByDate.has(today)) balanceByDate.set(today, currentBalanceMilliunits);
+
+  // Forward-fill every calendar day in range
+  const startDate = new Date(sinceDate);
+  const endDate = new Date(today);
+  const series: { date: string; balance: number; balance_formatted: string }[] = [];
+  let lastKnown = runningBalance;
+  for (const d = new Date(startDate); d <= endDate; d.setDate(d.getDate() + 1)) {
+    const dateStr = d.toISOString().slice(0, 10);
+    if (balanceByDate.has(dateStr)) lastKnown = balanceByDate.get(dateStr)!;
+    series.push({
+      date: dateStr,
+      balance: lastKnown,
+      balance_formatted: formatAmount(lastKnown),
+    });
+  }
+
+  // Compute 30-day delta
+  const cutoff30 = new Date();
+  cutoff30.setDate(cutoff30.getDate() - 30);
+  const cutoff30Str = cutoff30.toISOString().slice(0, 10);
+  const oldest30 = series.find((p) => p.date >= cutoff30Str);
+  const newest = series[series.length - 1];
+  const thirtyDayDelta = oldest30 && newest ? newest.balance - oldest30.balance : null;
+
+  return {
+    account_id: mainAccount.id,
+    account_name: mainAccount.name,
+    current_balance: currentBalanceMilliunits,
+    current_balance_formatted: formatAmount(currentBalanceMilliunits),
+    since_date: sinceDate,
+    thirty_day_delta: thirtyDayDelta,
+    thirty_day_delta_formatted: thirtyDayDelta != null ? formatAmount(thirtyDayDelta) : null,
+    data_points: series.length,
+    series,
+  };
+}
+
+// ── age of money ──────────────────────────────────────────────────────────────
+
+export async function handleAgeOfMoney(
+  client: YNABClient,
+  budgetId: string,
+  _budgetName: string,
+  _args: Record<string, never>
+) {
+  const month = await client.getBudgetMonth(budgetId, 'current');
+  return {
+    age_of_money: month.age_of_money,
+    month: month.month,
+    income: month.income,
+    income_formatted: formatAmount(month.income),
+    activity: month.activity,
+    activity_formatted: formatAmount(month.activity),
+    to_be_budgeted: month.to_be_budgeted,
+    to_be_budgeted_formatted: formatAmount(month.to_be_budgeted),
   };
 }
 
