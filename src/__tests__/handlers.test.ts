@@ -18,6 +18,7 @@ import {
   handleSyncCategories,
   handleApproveAll,
   handleCreateTransaction,
+  handleListUncategorized,
   handleListUnapproved,
   handleListPayees,
   handleApprove,
@@ -488,6 +489,23 @@ describe('handleCreateTransaction', () => {
   });
 });
 
+// ── handleListUncategorized ──────────────────────────────────────────────────
+
+describe('handleListUncategorized', () => {
+  it('emits account_id alongside account_name on every transaction', async () => {
+    const client = makeMockClient({
+      getTransactions: (jest.fn() as any).mockResolvedValue([
+        makeTxn({ id: 'txn-1', account_id: 'acc-1', account_name: 'Main', category_id: null, category_name: null }),
+      ]),
+    });
+    const result = await handleListUncategorized(client, BID, BNAME, {});
+    expect(result.count).toBe(1);
+    expect(result.transactions[0]).toMatchObject({
+      id: 'txn-1', account_id: 'acc-1', account_name: 'Main',
+    });
+  });
+});
+
 // ── handleListUnapproved ──────────────────────────────────────────────────────
 
 describe('handleListUnapproved', () => {
@@ -530,6 +548,9 @@ describe('handleListUnapproved', () => {
     const result = await handleListUnapproved(client, BID, BNAME, {});
     expect(result.count).toBe(1);
     expect(result.transactions[0]).toHaveProperty('amount_formatted');
+    // account_id is required by chief-ai's FinanceDataSchema; emit it alongside
+    // account_name so downstream consumers don't have to look up the id.
+    expect(result.transactions[0]).toHaveProperty('account_id', 'acc-1');
   });
 });
 
