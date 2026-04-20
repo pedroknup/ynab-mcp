@@ -67,8 +67,20 @@ export type TriggerKind =
   | 'category_underspend_pct'
   | 'total_available_below';
 
+/**
+ * Webhook payload emitted to chief-ai (or any consumer).
+ *
+ * The `type` field stays `budget_update` for back-compat with older chief-ai
+ * builds. New consumers look at the generic fields (`domain`, `source`,
+ * `kind`, `spoken`) — they let a chief-ai-shaped system treat this as a
+ * vendor-agnostic `provider_event` without the MCP knowing about that
+ * contract.
+ */
 export interface WebhookEvent {
   type: 'budget_update';
+  domain: 'finance';
+  source: 'ynab';
+  kind: TriggerKind;
   watch_id: string;
   timestamp: string;
   data:
@@ -95,6 +107,43 @@ export interface WebhookEvent {
         threshold: number;
         trigger: 'total_available_below';
       };
+  /** Adapter-composed natural-language line; chief-ai prefers this over its
+   *  domain-level fallback formatter. */
+  spoken: string;
+}
+
+/** Natural-language line composed by this MCP. chief-ai uses it verbatim. */
+function composeSpoken(data: WebhookEvent['data']): string {
+  if (data.trigger === 'category_overspend_pct') {
+    const dollars = Math.round(Math.abs(data.available) / 1000);
+    return `${data.category} is ${data.overspend_pct}% over budget, $${dollars.toLocaleString()} in the red.`;
+  }
+  if (data.trigger === 'category_underspend_pct') {
+    return `${data.category} is well under budget this month.`;
+  }
+  if (data.trigger === 'total_available_below') {
+    const dollars = Math.round(data.total_available / 1000);
+    return `Budget is running low — $${dollars.toLocaleString()} left across all categories.`;
+  }
+  return '';
+}
+
+/** Wrap a data payload into the full WebhookEvent envelope. */
+function makeEvent(
+  watch_id: string,
+  timestamp: string,
+  data: WebhookEvent['data']
+): WebhookEvent {
+  return {
+    type: 'budget_update',
+    domain: 'finance',
+    source: 'ynab',
+    kind: data.trigger,
+    watch_id,
+    timestamp,
+    data,
+    spoken: composeSpoken(data),
+  };
 }
 
 // Minimal shape of a category coming from YNABClient.getBudgetMonth().categories.
@@ -176,20 +225,15 @@ export function evaluateWatch(
       next.category_overspend[cat.id] = met;
       const wasMet = prev.category_overspend[cat.id] === true;
       if (met && !wasMet) {
-        events.push({
-          type: 'budget_update',
-          watch_id: watch.id,
-          timestamp: now.toISOString(),
-          data: {
-            category: cat.name,
-            category_id: cat.id,
-            budgeted: cat.budgeted,
-            activity: cat.activity,
-            available: cat.balance,
-            overspend_pct: overspendPct,
-            trigger: 'category_overspend_pct',
-          },
-        });
+        events.push(makeEvent(watch.id, now.toISOString(), {
+          category: cat.name,
+          category_id: cat.id,
+          budgeted: cat.budgeted,
+          activity: cat.activity,
+          available: cat.balance,
+          overspend_pct: overspendPct,
+          trigger: 'category_overspend_pct',
+        }));
       }
     }
   }
@@ -202,20 +246,15 @@ export function evaluateWatch(
       next.category_underspend[cat.id] = met;
       const wasMet = prev.category_underspend[cat.id] === true;
       if (met && !wasMet) {
-        events.push({
-          type: 'budget_update',
-          watch_id: watch.id,
-          timestamp: now.toISOString(),
-          data: {
-            category: cat.name,
-            category_id: cat.id,
-            budgeted: cat.budgeted,
-            activity: cat.activity,
-            available: cat.balance,
-            underspend_pct: underspendPct,
-            trigger: 'category_underspend_pct',
-          },
-        });
+        events.push(makeEvent(watch.id, now.toISOString(), {
+          category: cat.name,
+          category_id: cat.id,
+          budgeted: cat.budgeted,
+          activity: cat.activity,
+          available: cat.balance,
+          underspend_pct: underspendPct,
+          trigger: 'category_underspend_pct',
+        }));
       }
     }
   }
@@ -229,16 +268,11 @@ export function evaluateWatch(
     next.total_available_below = met;
     const wasMet = prev.total_available_below === true;
     if (met && !wasMet) {
-      events.push({
-        type: 'budget_update',
-        watch_id: watch.id,
-        timestamp: now.toISOString(),
-        data: {
-          total_available: budget.to_be_budgeted,
-          threshold: thresholdMilliunits,
-          trigger: 'total_available_below',
-        },
-      });
+      events.push(makeEvent(watch.id, now.toISOString(), {
+        total_available: budget.to_be_budgeted,
+        threshold: thresholdMilliunits,
+        trigger: 'total_available_below',
+      }));
     }
   }
 

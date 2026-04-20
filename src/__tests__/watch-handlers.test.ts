@@ -202,6 +202,9 @@ describe('evaluateWatch — threshold crossing', () => {
     const { events } = evaluateWatch(watch, budget, new Date('2026-04-17T14:32:00Z'));
     expect(events[0]).toEqual({
       type: 'budget_update',
+      domain: 'finance',
+      source: 'ynab',
+      kind: 'category_overspend_pct',
       watch_id: 'w-xyz',
       timestamp: '2026-04-17T14:32:00.000Z',
       data: {
@@ -213,6 +216,7 @@ describe('evaluateWatch — threshold crossing', () => {
         overspend_pct: 20,
         trigger: 'category_overspend_pct',
       },
+      spoken: 'Groceries is 20% over budget, $120 in the red.',
     });
   });
 });
@@ -222,6 +226,9 @@ describe('evaluateWatch — threshold crossing', () => {
 describe('deliverWebhook retry', () => {
   const event: WebhookEvent = {
     type: 'budget_update',
+    domain: 'finance',
+    source: 'ynab',
+    kind: 'category_overspend_pct',
     watch_id: 'w-1',
     timestamp: '2026-04-17T14:32:00.000Z',
     data: {
@@ -229,6 +236,7 @@ describe('deliverWebhook retry', () => {
       budgeted: 600_000, activity: -720_000, available: -120_000,
       overspend_pct: 20, trigger: 'category_overspend_pct',
     },
+    spoken: 'Groceries is 20% over budget, $120 in the red.',
   };
 
   it('does not retry on success', async () => {
