@@ -96,7 +96,8 @@ export async function handleListUncategorized(
     transactions: uncategorized.map((t) => ({
       id: t.id, date: t.date, amount: t.amount,
       amount_formatted: formatAmount(t.amount),
-      payee_name: t.payee_name, account_name: t.account_name,
+      payee_name: t.payee_name,
+      account_id: t.account_id, account_name: t.account_name,
       memo: t.memo, cleared: t.cleared, approved: t.approved,
     })),
   };
@@ -121,7 +122,8 @@ export async function handleListUnapproved(
     transactions: unapproved.map((t) => ({
       id: t.id, date: t.date, amount: t.amount,
       amount_formatted: formatAmount(t.amount),
-      payee_name: t.payee_name, account_name: t.account_name,
+      payee_name: t.payee_name,
+      account_id: t.account_id, account_name: t.account_name,
       category_id: t.category_id, category_name: t.category_name,
       memo: t.memo, cleared: t.cleared,
     })),
